@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
-import 'dart:html' as html;
 import 'dart:typed_data';
-import 'services/web_audio_recorder.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'services/mobile_audio_recorder.dart';
 import 'services/scribe_v2_realtime.dart';
 import 'services/aws_translate_service.dart';
 import 'services/elevenlabs_service.dart';
@@ -46,6 +46,7 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
   
   late AnimationController _waveController;
   late AnimationController _pulseController;
+  final AudioPlayer _audioPlayer = AudioPlayer();
 
   final List<Map<String, String>> languages = [
     {'code': 'fr', 'name': 'Français', 'flag': '🇫🇷'},
@@ -80,11 +81,12 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
   void dispose() {
     _waveController.dispose();
     _pulseController.dispose();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
-  WebAudioRecorder? _recorder1;
-  WebAudioRecorder? _recorder2;
+  MobileAudioRecorder? _recorder1;
+  MobileAudioRecorder? _recorder2;
   ScribeV2Service? _scribe1;
   ScribeV2Service? _scribe2;
   String? _lastTranscript1;
@@ -101,7 +103,7 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
       _scribe1!.start(_getLangCode(selectedLang1));
 
       // Démarrer l'enregistrement
-      _recorder1 = WebAudioRecorder();
+      _recorder1 = MobileAudioRecorder();
       final started = await _recorder1!.startRecording();
       
       if (!started) {
@@ -109,7 +111,7 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
           isRecording1 = false;
           transcription1 = '❌ Erreur: Microphone non accessible';
         });
-        _scribe1?.dispose();
+        // _scribe1?.dispose(); // Ne pas fermer le stream ici
         return;
       }
 
@@ -155,7 +157,7 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
         }
       }
       
-      _scribe1?.dispose();
+      // _scribe1?.dispose(); // Le stream reste ouvert pour réutilisation
       _recorder1?.dispose();
     }
   }
@@ -169,7 +171,7 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
       _scribe2 = ScribeV2Service();
       _scribe2!.start(_getLangCode(selectedLang2));
 
-      _recorder2 = WebAudioRecorder();
+      _recorder2 = MobileAudioRecorder();
       final started = await _recorder2!.startRecording();
       
       if (!started) {
@@ -177,7 +179,7 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
           isRecording2 = false;
           transcription2 = '❌ Error: Microphone not accessible';
         });
-        _scribe2?.dispose();
+        // _scribe2?.dispose(); // Ne pas fermer le stream
         return;
       }
 
@@ -219,7 +221,7 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
         }
       }
       
-      _scribe2?.dispose();
+      // _scribe2?.dispose(); // Le stream reste ouvert
       _recorder2?.dispose();
     }
   }
@@ -242,15 +244,9 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
     return langMap[language] ?? 'en';
   }
 
-  void _playAudio(Uint8List audioBytes) {
+  void _playAudio(Uint8List audioBytes) async {
     try {
-      final blob = html.Blob([audioBytes], 'audio/mpeg');
-      final url = html.Url.createObjectUrlFromBlob(blob);
-      final audio = html.AudioElement(url);
-      audio.play();
-      audio.onEnded.listen((_) {
-        html.Url.revokeObjectUrl(url);
-      });
+      await _audioPlayer.play(BytesSource(audioBytes));
       print('🔊 Playing audio');
     } catch (e) {
       print('❌ Audio playback error: $e');
@@ -523,44 +519,86 @@ class _TranslationScreenState extends State<TranslationScreen> with TickerProvid
               ),
             ),
           
-          // Bouton Microphone
+          // Bouton Microphone avec animation améliorée (Press & Hold)
           GestureDetector(
-            onTapDown: (_) => onMicPressed(),
-            onTapUp: (_) {
-              if (isRecording) onMicPressed();
+            onLongPressStart: (_) {
+              if (!isRecording) onMicPressed(); // Commence l'enregistrement
+            },
+            onLongPressEnd: (_) {
+              if (isRecording) onMicPressed(); // Arrête et lance la traduction
+            },
+            onTap: () {
+              // Simple tap : toggle classique pour compatibilité
+              onMicPressed();
             },
             child: AnimatedBuilder(
               animation: _pulseController,
               builder: (context, child) {
-                return Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: isRecording
-                          ? [primaryColor, primaryColor.withOpacity(0.7)]
-                          : [primaryColor.withOpacity(0.3), primaryColor.withOpacity(0.2)],
+                final scale = isRecording ? 1.0 + (_pulseController.value * 0.1) : 1.0;
+                
+                return Transform.scale(
+                  scale: scale,
+                  child: Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: isRecording
+                            ? [const Color(0xFFFF3B30), const Color(0xFFFF6B6B)] // Rouge vif
+                            : [primaryColor.withOpacity(0.4), primaryColor.withOpacity(0.3)],
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: isRecording
+                          ? [
+                              BoxShadow(
+                                color: const Color(0xFFFF3B30).withOpacity(0.6 * _pulseController.value),
+                                blurRadius: 30,
+                                spreadRadius: 8,
+                              ),
+                            ]
+                          : [
+                              BoxShadow(
+                                color: primaryColor.withOpacity(0.2),
+                                blurRadius: 10,
+                                spreadRadius: 2,
+                              ),
+                            ],
                     ),
-                    shape: BoxShape.circle,
-                    boxShadow: isRecording
-                        ? [
-                            BoxShadow(
-                              color: primaryColor.withOpacity(0.4 * _pulseController.value),
-                              blurRadius: 20,
-                              spreadRadius: 5,
-                            ),
-                          ]
-                        : [],
-                  ),
-                  child: Icon(
-                    Icons.mic,
-                    color: isRecording ? Colors.white : Colors.white54,
-                    size: 28,
+                    child: Icon(
+                      isRecording ? Icons.stop : Icons.mic,
+                      color: Colors.white,
+                      size: isRecording ? 32 : 28,
+                    ),
                   ),
                 );
               },
             ),
           ),
+          
+          // Indicateur d'enregistrement
+          if (isRecording)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF3B30).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: const Color(0xFFFF3B30).withOpacity(0.4),
+                    width: 1.5,
+                  ),
+                ),
+                child: const Text(
+                  '🎤 Recording...',
+                  style: TextStyle(
+                    color: Color(0xFFFF3B30),
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
           
           const SizedBox(height: 8),
           
