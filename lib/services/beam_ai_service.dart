@@ -47,19 +47,17 @@ class BeamAiService {
     } catch (_) {}
   }
 
-  /// 🏥 Heartbeat: Ping the health endpoint directly (Lightweight CPU)
+  /// 🏥 Heartbeat: Ping the health endpoint (Lightweight CPU)
   Future<void> health() async {
     try {
+      // Direct GET is most efficient for preventing hibernation
       await _dio.get('https://tgpro1-s2st.hf.space/health');
     } catch (_) {}
   }
 
-  /// 💓 ACTIVE HEARTBEAT: Deep ping that triggers a GPU session (Prevents deep sleep)
+  /// 🧛 Active Keep-Alive: Use regular health check (CPU) to avoid GPU queue loops
   Future<void> deepHeartbeat() async {
-    try {
-      _log("Sending deep heartbeat...");
-      await _callDirectAPI({"action": "health"});
-    } catch (_) {}
+    await health(); 
   }
 
   /// 🧹 CACHE CLEAR: Manually trigger backend cleanup
